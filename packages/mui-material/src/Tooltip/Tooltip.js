@@ -7,6 +7,7 @@ import elementAcceptingRef from '@mui/utils/elementAcceptingRef';
 import composeClasses from '@mui/utils/composeClasses';
 import isFocusVisible from '@mui/utils/isFocusVisible';
 import getReactElementRef from '@mui/utils/getReactElementRef';
+import useEnhancedEffect from '@mui/utils/useEnhancedEffect';
 import { styled, useTheme } from '../zero-styled';
 import memoTheme from '../utils/memoTheme';
 import { useDefaultProps } from '../DefaultPropsProvider';
@@ -271,6 +272,8 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
   const [arrowRef, setArrowRef] = React.useState(null);
   const ignoreNonTouchEvents = React.useRef(false);
   const openedByDisabledTriggerRef = React.useRef(false);
+  const hoverTargetRef = React.useRef(null);
+  const popperNodeRef = React.useRef(null);
 
   const disableInteractive = disableInteractiveProp || followCursor;
 
@@ -322,6 +325,7 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
      */
     (event) => {
       openedByDisabledTriggerRef.current = false;
+      hoverTargetRef.current = null;
       hystersisTimer.start(800 + leaveDelay, () => {
         hystersisOpen = false;
       });
@@ -340,6 +344,10 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
   const handleMouseOver = (event) => {
     if (ignoreNonTouchEvents.current && event.type !== 'touchstart') {
       return;
+    }
+
+    if (event.type === 'mouseover') {
+      hoverTargetRef.current = event.target;
     }
 
     // Remove the title ahead of time.
@@ -386,6 +394,7 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
   };
 
   const handleMouseLeave = (event) => {
+    hoverTargetRef.current = null;
     enterTimer.clear();
     leaveTimer.start(leaveDelay, () => {
       handleClose(event);
@@ -503,6 +512,36 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
   if (!title && title !== 0) {
     open = false;
   }
+
+  const handleOwnerMouseOver = useEventCallback((event) => {
+    // Removing the hovered node (for example, swapping icons on open) can suppress
+    // the mouseout that React needs to synthesize onMouseLeave.
+    const hoverTarget = hoverTargetRef.current;
+    if (!hoverTarget || hoverTarget.isConnected || ignoreNonTouchEvents.current) {
+      return;
+    }
+
+    const path = event.composedPath();
+    if (path.includes(childNode) || (!disableInteractive && path.includes(popperNodeRef.current))) {
+      return;
+    }
+
+    handleMouseLeave(event);
+  });
+
+  const doc = childNode?.ownerDocument;
+  useEnhancedEffect(() => {
+    if (!open || disableHoverListener) {
+      hoverTargetRef.current = null;
+      return undefined;
+    }
+    if (!doc) {
+      return undefined;
+    }
+
+    doc.addEventListener('mouseover', handleOwnerMouseOver, true);
+    return () => doc.removeEventListener('mouseover', handleOwnerMouseOver, true);
+  }, [doc, open, disableHoverListener, handleOwnerMouseOver]);
 
   const popperRef = React.useRef();
 
@@ -646,6 +685,7 @@ const Tooltip = React.forwardRef(function Tooltip(inProps, ref) {
     externalForwardedProps,
     ownerState,
     className: classes.popper,
+    ref: popperNodeRef,
   });
 
   const [TransitionSlot, transitionSlotProps] = useSlot('transition', {
