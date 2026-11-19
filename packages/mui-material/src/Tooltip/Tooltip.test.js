@@ -15,6 +15,7 @@ import {
 } from '@mui/internal-test-utils';
 import { camelCase } from 'es-toolkit/string';
 import Tooltip, { tooltipClasses as classes } from '@mui/material/Tooltip';
+import IconButton from '@mui/material/IconButton';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { testReset } from './Tooltip';
 import describeConformance from '../../test/describeConformance';
@@ -849,6 +850,128 @@ describe('<Tooltip />', () => {
       fireEvent.mouseOver(screen.getByRole('tooltip'));
 
       expect(handleMouseOver.callCount).to.equal(0);
+    });
+  });
+
+  // https://github.com/mui/material-ui/issues/47073
+  // When the element under the pointer is removed (e.g. an icon swapped on hover or open),
+  // browsers don't dispatch `mouseout` for it, so React never fires `onMouseLeave`.
+  // These tests dispatch the event sequences recorded with real pointer input:
+  // Chromium sends `mouseover` on the new target with the trigger as `relatedTarget`,
+  // WebKit sends it with the removed node as `relatedTarget`.
+  describe('hovered trigger content is replaced', () => {
+    function FilledIcon() {
+      return <svg data-testid="filled-icon" />;
+    }
+    function OutlinedIcon() {
+      return <svg data-testid="outlined-icon" />;
+    }
+
+    function HoverSwapTrigger(props) {
+      const [hovered, setHovered] = React.useState(false);
+      return (
+        <React.Fragment>
+          <Tooltip title="Hello World" slotProps={{ transition: { timeout: 0 } }} {...props}>
+            <IconButton onMouseOver={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+              {hovered ? <FilledIcon /> : <OutlinedIcon />}
+            </IconButton>
+          </Tooltip>
+          <div data-testid="outside" />
+        </React.Fragment>
+      );
+    }
+
+    it('closes when the pointer leaves without a mouseout (Chromium)', () => {
+      render(<HoverSwapTrigger enterDelay={100} />);
+      const button = screen.getByRole('button');
+
+      fireEvent.mouseOver(screen.getByTestId('outlined-icon'));
+      // The hovered icon was replaced and is no longer in the document.
+      expect(screen.queryByTestId('outlined-icon')).to.equal(null);
+
+      fireEvent.mouseOver(screen.getByTestId('outside'), { relatedTarget: button });
+      clock.tick(100);
+
+      expect(screen.queryByRole('tooltip')).to.equal(null);
+    });
+
+    it('closes when the pointer leaves without a mouseout (WebKit)', () => {
+      render(<HoverSwapTrigger enterDelay={100} />);
+      const outlinedIcon = screen.getByTestId('outlined-icon');
+
+      fireEvent.mouseOver(outlinedIcon);
+      expect(outlinedIcon.isConnected).to.equal(false);
+
+      fireEvent.mouseOver(screen.getByTestId('outside'), { relatedTarget: outlinedIcon });
+      clock.tick(100);
+
+      expect(screen.queryByRole('tooltip')).to.equal(null);
+    });
+
+    it('calls onClose for a controlled tooltip whose icon depends on `open`', () => {
+      const handleClose = spy();
+
+      function ControlledSwap() {
+        const [open, setOpen] = React.useState(false);
+        return (
+          <React.Fragment>
+            <Tooltip
+              title="Hello World"
+              enterDelay={0}
+              open={open}
+              onOpen={() => setOpen(true)}
+              onClose={() => {
+                handleClose();
+                setOpen(false);
+              }}
+              slotProps={{ transition: { timeout: 0 } }}
+            >
+              <IconButton>{open ? <FilledIcon /> : <OutlinedIcon />}</IconButton>
+            </Tooltip>
+            <div data-testid="outside" />
+          </React.Fragment>
+        );
+      }
+
+      render(<ControlledSwap />);
+      const button = screen.getByRole('button');
+
+      fireEvent.mouseOver(screen.getByTestId('outlined-icon'));
+      expect(screen.getByRole('tooltip')).toBeVisible();
+      expect(screen.queryByTestId('outlined-icon')).to.equal(null);
+
+      fireEvent.mouseOver(screen.getByTestId('outside'), { relatedTarget: button });
+      clock.tick(0); // leaveDelay
+      clock.tick(0); // exit transition
+
+      expect(handleClose.callCount).to.equal(1);
+      expect(screen.queryByRole('tooltip')).to.equal(null);
+    });
+
+    it('stays open while the pointer moves within the trigger and onto the interactive popper', () => {
+      render(<HoverSwapTrigger enterDelay={0} />);
+
+      fireEvent.mouseOver(screen.getByTestId('outlined-icon'));
+      fireEvent.mouseOver(screen.getByTestId('filled-icon'));
+      fireEvent.mouseOver(screen.getByRole('button'));
+      clock.tick(0);
+      expect(screen.getByRole('tooltip')).toBeVisible();
+
+      fireEvent.mouseOver(screen.getByRole('tooltip'));
+      clock.tick(0);
+      expect(screen.getByRole('tooltip')).toBeVisible();
+    });
+
+    it('does not close a focus-opened tooltip on unrelated mouseover', async () => {
+      render(<HoverSwapTrigger enterDelay={0} />);
+
+      await focusVisible(screen.getByRole('button'));
+      clock.tick(0);
+      expect(screen.getByRole('tooltip')).toBeVisible();
+
+      fireEvent.mouseOver(screen.getByTestId('outside'));
+      clock.tick(0);
+      expect(screen.getByRole('tooltip')).toBeVisible();
     });
   });
 
