@@ -15,6 +15,7 @@ import {
 } from '@mui/internal-test-utils';
 import { camelCase } from 'es-toolkit/string';
 import Tooltip, { tooltipClasses as classes } from '@mui/material/Tooltip';
+import IconButton from '@mui/material/IconButton';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { testReset } from './Tooltip';
 import describeConformance from '../../test/describeConformance';
@@ -526,6 +527,58 @@ describe('<Tooltip />', () => {
     clock.tick(100);
 
     expect(eventLog).to.deep.equal(['mouseover']);
+  });
+
+  it('closes when the hovered icon is replaced and the browser skips mouseout', () => {
+    const handleClose = spy();
+
+    function TestCase() {
+      const [open, setOpen] = React.useState(false);
+
+      return (
+        <React.Fragment>
+          <Tooltip
+            title="Hello World"
+            open={open}
+            onOpen={() => setOpen(true)}
+            onClose={(event) => {
+              handleClose(event);
+              setOpen(false);
+            }}
+            enterDelay={0}
+            leaveDelay={50}
+            slotProps={{ transition: { timeout: 0 } }}
+          >
+            <IconButton>
+              <svg key={String(open)} data-testid="icon" />
+            </IconButton>
+          </Tooltip>
+          <div data-testid="outside" />
+        </React.Fragment>
+      );
+    }
+
+    render(
+      <AwayFromRealPointer>
+        <TestCase />
+      </AwayFromRealPointer>,
+    );
+
+    const button = screen.getByRole('button');
+    const icon = screen.getByTestId('icon');
+    fireEvent.mouseOver(icon);
+    clock.tick(0);
+    expect(screen.getByRole('tooltip')).toBeVisible();
+    expect(icon.isConnected).to.equal(false);
+
+    // Chromium can retarget the next mouseover to the button as relatedTarget,
+    // without dispatching the mouseout that React uses to generate onMouseLeave.
+    fireEvent.mouseOver(screen.getByTestId('outside'), { relatedTarget: button });
+    clock.tick(49);
+    expect(handleClose.callCount).to.equal(0);
+    clock.tick(1);
+    expect(handleClose.callCount).to.equal(1);
+    expect(screen.getByRole('tooltip')).not.toBeVisible();
   });
 
   it('should not call onClose if already closed', () => {
